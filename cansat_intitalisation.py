@@ -85,5 +85,4 @@ class Can:
         bmp280 = BME280(i2c=bmp280_i2c)  # Use BME280 class for BMP280
         return bmp280
 
-# Create an instance of the SensorSystem
 can = Can()
