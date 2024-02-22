@@ -1,3 +1,4 @@
+import time
 from machine import Pin, SPI, I2C, UART
 from sdcard import SDCard
 from rfm69 import RFM69
@@ -33,7 +34,9 @@ class Can:
         self.SD_CS = 13
         self.BUZZER = 14
         self.RFM69HCW_RST = 15
-
+        
+        self.SEALEVEL_PRESSURE = 101325.0
+        
         # Initialize components
         self.sd = self.initialize_sd()
         self.rfm = self.initialize_rfm69()
@@ -77,12 +80,30 @@ class Can:
     def initialize_ms5611(self):
         ms5611_i2c = I2C(self.MS5611_I2C_ID, sda=Pin(self.MS5611_SDA), scl=Pin(self.MS5611_SCL))
         ms5611 = MS5611(ms5611_i2c)
-        ms5611.initialize()
         return ms5611
 
     def initialize_bmp280(self):
         bmp280_i2c = I2C(self.BMP_I2C_ID, sda=Pin(self.BMP280_SDA), scl=Pin(self.BMP280_SCL))
         bmp280 = BME280(i2c=bmp280_i2c)  # Use BME280 class for BMP280
         return bmp280
+    
+    def calculate_altitude(self, pressure):
+        try:
+            return 44330 * (1.0 - pow(pressure / self.sealevel, 0.1903))
+        except Exception as e:
+            print("Error calculating altitude:", e)
+            return 0.0
+
+    
 
 can = Can()
+
+while True:
+        data1 = can.ms5611.read_compensated_data()
+        data2 = can.bmp280.read_compensated_data()
+
+        temp1 = data1[1] / 100  
+        temp2 = data2[1] /100
+
+        print(f"{temp1},{temp2}")
+        time.sleep(0.05)

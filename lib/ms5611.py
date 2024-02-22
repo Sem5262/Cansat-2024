@@ -32,6 +32,7 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 import time
 from machine import I2C
+from array import array
 
 class MS5611:
     __MS5611_ADDRESS_CSB_LOW  = 0x76
@@ -75,6 +76,8 @@ class MS5611:
         self.D2 = 0
         self.TEMP = 0.0  # Calculated temperature
         self.PRES = 0.0  # Calculated Pressure
+        
+        self.initialize()
 
     def initialize(self):
         # The MS6511 Sensor stores 6 values in the EPROM memory that we need in order to calculate the actual temperature and pressure
@@ -137,7 +140,6 @@ class MS5611:
         self.PRES = (self.D1 * SENS / 2**21 - OFF) / 2**15
 
         self.TEMP = self.TEMP / 100  # Temperature updated
-        self.PRES = self.PRES / 100  # Pressure updated
 
     def returnPressure(self):
         return self.PRES
@@ -147,11 +149,13 @@ class MS5611:
 
     def update(self):
         self.refreshPressure()
-        time.sleep(0.01)  # Waiting for pressure data ready
+        time.sleep(0.01)
         self.readPressure()
-
         self.refreshTemperature()
-        time.sleep(0.01)  # Waiting for temperature data ready
+        time.sleep(0.01)
         self.readTemperature()
-
         self.calculatePressureAndTemperature()
+    
+    def read_compensated_data(self):
+        self.update()
+        return array("f", (self.TEMP, self.PRES))

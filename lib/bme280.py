@@ -1,5 +1,5 @@
 import time
-from ustruct import unpack
+from ustruct import unpack, unpack_from
 from array import array
 
 # BME280 default address.
@@ -12,6 +12,8 @@ BME280_OSAMPLE_4 = 3
 BME280_OSAMPLE_8 = 4
 BME280_OSAMPLE_16 = 5
 
+BME280_REGISTER_CONTROL_HUM = 0xF2
+BME280_REGISTER_STATUS = 0xF3
 BME280_REGISTER_CONTROL = 0xF4
 
 MODE_SLEEP = const(0)
@@ -28,12 +30,14 @@ class BME280:
                  i2c=None,
                  **kwargs):
         # Check that mode is valid.
-        if type(mode) == int:
-            self._mode_temp, self._mode_press = mode, mode
+        if type(mode) is tuple and len(mode) == 3:
+            self._mode_hum, self._mode_temp, self._mode_press = mode
+        elif type(mode) == int:
+            self._mode_hum, self._mode_temp, self._mode_press = mode, mode, mode
         else:
-            raise ValueError("Wrong type for the mode parameter, must be int")
+            raise ValueError("Wrong type for the mode parameter, must be int or a 3 element tuple")
 
-        for mode in (self._mode_temp, self._mode_press):
+        for mode in (self._mode_hum, self._mode_temp, self._mode_press):
             if mode not in [BME280_OSAMPLE_1, BME280_OSAMPLE_2, BME280_OSAMPLE_4,
                             BME280_OSAMPLE_8, BME280_OSAMPLE_16]:
                 raise ValueError(
@@ -49,16 +53,23 @@ class BME280:
 
         # load calibration data
         dig_88_a1 = self.i2c.readfrom_mem(self.address, 0x88, 26)
+        dig_e1_e7 = self.i2c.readfrom_mem(self.address, 0xE1, 7)
 
         self.dig_T1, self.dig_T2, self.dig_T3, self.dig_P1, \
             self.dig_P2, self.dig_P3, self.dig_P4, self.dig_P5, \
             self.dig_P6, self.dig_P7, self.dig_P8, self.dig_P9, \
             _, self.dig_H1 = unpack("<HhhHhhhhhhhhBB", dig_88_a1)
 
+        self.dig_H2, self.dig_H3, self.dig_H4,\
+            self.dig_H5, self.dig_H6 = unpack("<hBbhb", dig_e1_e7)
+        # unfold H4, H5, keeping care of a potential sign
+        self.dig_H4 = (self.dig_H4 * 16) + (self.dig_H5 & 0xF)
+        self.dig_H5 //= 16
+
         # temporary data holders which stay allocated
         self._l1_barray = bytearray(1)
         self._l8_barray = bytearray(8)
-        self._l3_resultarray = array("i", [0, 0])
+        self._l3_resultarray = array("i", [0, 0, 0])
 
         self._l1_barray[0] = self._mode_temp << 5 | self._mode_press << 2 | MODE_SLEEP
         self.i2c.writeto_mem(self.address, BME280_REGISTER_CONTROL,
@@ -69,26 +80,29 @@ class BME280:
         """ Reads the raw (uncompensated) data from the sensor.
 
             Args:
-                result: array of length 2 where the result will be
+                result: array of length 2 or alike where the result will be
                 stored, in temperature, pressure order
             Returns:
                 None
         """
 
+        self._l1_barray[0] = self._mode_hum
+        self.i2c.writeto_mem(self.address, BME280_REGISTER_CONTROL_HUM,
+                             self._l1_barray)
         self._l1_barray[0] = self._mode_temp << 5 | self._mode_press << 2 | MODE_FORCED
         self.i2c.writeto_mem(self.address, BME280_REGISTER_CONTROL,
                              self._l1_barray)
 
         # Wait for conversion to complete
         for _ in range(BME280_TIMEOUT):
-            if self.i2c.readfrom_mem(self.address, BME280_REGISTER_CONTROL, 1)[0] & 0x01:
+            if self.i2c.readfrom_mem(self.address, BME280_REGISTER_STATUS, 1)[0] & 0x08:
                 time.sleep_ms(10)  # still busy
             else:
                 break  # Sensor ready
         else:
             raise RuntimeError("Sensor BME280 not ready")
 
-        # burst readout from 0xF7 to 0xFD, recommended by datasheet
+        # burst readout from 0xF7 to 0xFE, recommended by datasheet
         self.i2c.readfrom_mem_into(self.address, 0xF7, self._l8_barray)
         readout = self._l8_barray
         # pressure(0xF7): ((msb << 16) | (lsb << 8) | xlsb) >> 4
@@ -96,23 +110,19 @@ class BME280:
         # temperature(0xFA): ((msb << 16) | (lsb << 8) | xlsb) >> 4
         raw_temp = ((readout[3] << 16) | (readout[4] << 8) | readout[5]) >> 4
 
+        
+
         result[0] = raw_temp
         result[1] = raw_press
 
-    def read_compensated_data(self, result=None):
+    def read_compensated_data(self):
         """ Reads the data from the sensor and returns the compensated data.
 
-            Args:
-                result: array of length 3 where the result will be
-                stored, in temperature, pressure, altitude order. You may use
-                this to read out the sensor without allocating heap memory
-
             Returns:
-                array with temperature, pressure, altitude. Will be the one
-                from the result parameter if not None
+                array with temperature, pressure
         """
         self.read_raw_data(self._l3_resultarray)
-        raw_temp, raw_press = self._l3_resultarray
+        raw_temp, raw_press, raw_hum = self._l3_resultarray
         # temperature
         var1 = (raw_temp/16384.0 - self.dig_T1/1024.0) * self.dig_T2
         var2 = raw_temp/131072.0 - self.dig_T1/8192.0
@@ -136,36 +146,14 @@ class BME280:
             pressure = p + (var1 + var2 + self.dig_P7) / 16.0
             pressure = max(30000, min(110000, pressure))
 
-        # altitude
-        altitude = self.calculate_altitude(pressure)
+       
+        return array("f", (temp, pressure))
 
-        if result:
-            result[0] = temp
-            result[1] = pressure
-            result[2] = altitude
-            return result
-
-        return array("f", (temp, pressure, altitude))
-    
-    def calculate_altitude(self, pressure):
-        try:
-            return 44330 * (1.0 - pow(pressure / self.__sealevel, 0.1903))
-        except:
-            return 0.0
-        
-    @property
-    def sealevel(self):
-        return self.__sealevel
-
-    @sealevel.setter
-    def sealevel(self, value):
-        if 30000 < value < 120000:  # just ensure some reasonable value
-            self.__sealevel = value
 
     @property
     def values(self):
         """ human readable values """
 
-        t, p, altitude = self.read_compensated_data()
+        t, p = self.read_compensated_data()
 
-        return ("{:.2f}C".format(t), "{:.2f}hPa".format(p/100), "{:.2f}m".format(altitude))
+        return ("{:.2f}C".format(t), "{:.2f}hPa".format(p/100))
