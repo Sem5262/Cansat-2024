@@ -1,17 +1,14 @@
-
 from machine import I2C, Pin
-from bme280_advanced import *
-from utime import sleep
+from bme280 import BME280 
+
+# Define I2C pins
+i2c = I2C(sda=Pin(6), scl=Pin(7))
+
+bme = BME280(i2c=i2c)
 
 
+temperature, pressure, altitude = bme.read_compensated_data()
 
-sda = Pin(0)
-scl = Pin(1)
-
-i2c = I2C(0,sda=sda, scl=scl)
-
-bme280 = BME280(i2c=i2c)
-
-while True:
-    print(bme280.values)
-    sleep(1)
+print("Temperature: {:.15f}°C".format(temperature))
+print("Pressure: {:.15f}hPa".format(pressure / 100))
+print("Altitude: {:.15f} meters".format(altitude))
