@@ -37,18 +37,35 @@ class Can:
         
         self.SEALEVEL_PRESSURE = 101325.0
         
+        
+        self.BUFFER_SIZE =100
+        self.current_filename = "/sd/data.csv"
+        
+        self.operating_mode = 0
+        
         # Initialize components
         self.sd = self.initialize_sd()
         self.rfm = self.initialize_rfm69()
         self.gps = self.initialize_gps()
         self.ms5611 = self.initialize_ms5611()
         self.bmp280 = self.initialize_bmp280()
-
+        self.BUFFER = []
+        
+        self.init_session_directory()
+        
+        
     def initialize_sd(self):
+        """
+        Initializes the Micro SD card.
+
+        Returns:
+            SDCard: The Micro SD card object.
+        """
         try:
             sd = SDCard(SPI(1, sck=Pin(self.SD_SCK), mosi=Pin(self.SD_MOSI), miso=Pin(self.SD_MISO)), Pin(self.SD_CS))
             return sd
         except OSError as e:
+            
             if "no SD card" in str(e):
                 print("Error: SD-card:", e)
             else:
@@ -56,6 +73,12 @@ class Can:
             return None
 
     def initialize_rfm69(self):
+        """
+        Initializes the RFM69HCW Transceiver.
+
+        Returns:
+            RFM69: The RFM69HCW Transceiver object.
+        """
         try:
             rfm_spi = SPI(self.RFM69HCW_SPI_ID, baudrate=50000, polarity=0, phase=0, firstbit=SPI.MSB,
                           mosi=Pin(self.RFM69HCW_MOSI), miso=Pin(self.RFM69HCW_MISO), sck=Pin(self.RFM69HCW_SCK))
@@ -70,40 +93,116 @@ class Can:
             rfm.encryption_key = b"\x01\x02\x03\x04\x05\x06\x07\x08\x01\x02\x03\x04\x05\x06\x07\x08"
 
             return rfm
-        except RuntimeError as e:
+        except RuntimeError as e:                
             print("Error: Radio module isn't wired in correctly:", e)
             return None
 
     def initialize_gps(self):
+        """
+        Initializes the GPS module.
+
+        Returns:
+            GPS: The GPS module object.
+        """
         return GPS(UART(self.GPS_UART_ID, baudrate=9600, tx=Pin(self.GPS_TX), rx=Pin(self.GPS_RX)))
 
     def initialize_ms5611(self):
+         """
+        Initializes the MS5611 sensor.
+
+        Returns:
+            MS5611: The MS5611 sensor object.
+        """
         ms5611_i2c = I2C(self.MS5611_I2C_ID, sda=Pin(self.MS5611_SDA), scl=Pin(self.MS5611_SCL))
         ms5611 = MS5611(ms5611_i2c)
         return ms5611
 
     def initialize_bmp280(self):
+        """
+        Initializes the BMP280 sensor.
+
+        Returns:
+            BME280: The BMP280 sensor object.
+        """
         bmp280_i2c = I2C(self.BMP_I2C_ID, sda=Pin(self.BMP280_SDA), scl=Pin(self.BMP280_SCL))
         bmp280 = BME280(i2c=bmp280_i2c)  # Use BME280 class for BMP280
         return bmp280
     
     def calculate_altitude(self, pressure):
+         """
+        Calculates altitude based on the provided pressure.
+
+        Args:
+            pressure (float): The pressure value.
+
+        Returns:
+            float: Calculated altitude.
+        """
         try:
             return 44330 * (1.0 - pow(pressure / self.sealevel, 0.1903))
         except Exception as e:
             print("Error calculating altitude:", e)
             return 0.0
-
     
+    def get_ms5611_data(self):
+       """
+        Reads and returns compensated data from the MS5611 sensor.
 
-can = Can()
+        Returns:
+            array: Array containing temperature and pressure.
+        """
+        try:
+            data = self.ms5611.read_compensated_data()
+            return array("f", (data[0], data[1] / 100)) # convert to hPa
+        
+        except Exception as e:
+            print("Error reading MS5611 data:", e)
+            return None, None
 
-while True:
-        data1 = can.ms5611.read_compensated_data()
-        data2 = can.bmp280.read_compensated_data()
+    def get_bmp280_data(self):
+        """
+        Reads and returns compensated data from the BMP280 sensor.
 
-        temp1 = data1[1] / 100  
-        temp2 = data2[1] /100
+        Returns:
+            array: Array containing temperature and pressure.
+        """
+        try:
+            data = self.bmp280.read_compensated_data()
+            return array("f", (data[0], data[1] / 100)) # convert to hPa
+        except Exception as e:
+            print("Error reading BMP280 data:", e)
+            return None, None
+        
+     def init_session_directory(self):
+        """
+        Initializes the session directory on the SD card.
+        """
+        if self.sd is not None:
+            session_dir = "/sd/session"
+            try:
+                os.mkdir(session_dir)
+                print("Session directory created:", session_dir)
+            except OSError:
+                print("Session directory already exists.")
+    
+    def store_data_in_buffer(self, data):
+        """
+        Stores data in the buffer.
 
-        print(f"{temp1},{temp2}")
-        time.sleep(0.05)
+        Args:
+            data: Data to be stored in the buffer.
+        """
+        if len(self.buffer) < self.BUFFER_SIZE:
+            self.buffer.append(data)
+        else:
+            self.save_buffer_to_csv()
+            self.buffer = []
+            
+    def save_buffer_to_csv(self):
+        """
+        Saves data from the buffer to a CSV file on the SD card.
+        """
+        if self.sd is not None:
+            with open(self.current_file_name, 'a') as f:
+                f.write('\n'.join(buffer) + '\n')
+                
