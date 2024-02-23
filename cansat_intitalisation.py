@@ -173,6 +173,34 @@ class Can:
             print("Error reading BMP280 data:", e)
             return None, None
         
+     def get_gps_data(self):
+        """
+        Update GPS data.
+
+        Returns:
+            array: An array containing updated GPS data.
+        """
+        gps_data = array("f", [None] * 11)
+
+        try:
+            self.gps.update()
+            gps_data[0] = self.gps.timestamp_utc
+            gps_data[1] = self.gps.latitude
+            gps_data[2] = self.gps.longitude
+            gps_data[3] = self.gps.fix_quality
+            gps_data[4] = self.gps.satellites
+            gps_data[5] = self.gps.horizontal_dilution
+            gps_data[6] = self.gps.altitude_m
+            gps_data[7] = self.gps.height_geoid
+            gps_data[8] = self.gps.velocity_knots
+            gps_data[9] = self.gps.speed_knots
+            gps_data[10] = self.gps.track_angle_deg
+
+        except Exception as e:
+            print("Error updating GPS data:", e)
+
+        return gps_data
+        
      def init_session_directory(self):
         """
         Initializes the session directory on the SD card.
